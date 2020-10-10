@@ -137,7 +137,7 @@ export default class GoogleMapMarkers extends Component {
   _onChildMouseDown = (event) => {
     if (this.props.onChildMouseDown) {
       var canPerformEvent = (this.hoverChildProps_ ? true : false)
-      if (!canPerformEvent && this.props.useTouchEvents){
+      if (!canPerformEvent && this.props.useTouchEvents && event.type === 'touchstart'){
         const eventPosition = {
           x: event.touches[0].pageX,
           y: event.touches[0].pageY

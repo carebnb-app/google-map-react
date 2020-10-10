@@ -1046,7 +1046,7 @@ class GoogleMap extends Component {
   // gmap can't prevent map drag if mousedown event already occured
   // the only workaround I find is prevent mousedown native browser event
   _onMapMouseDownNative = (event) => {
-    if (!this.mouseInMap_ || (this.props.useTouchEvents && event.type !== 'touchstart')) return;
+    if (!this.mouseInMap_ && this.props.useTouchEvents && event.type !== 'touchstart') return;
     this._onMapMouseDown(event);
   };
 
