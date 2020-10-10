@@ -27,6 +27,7 @@ const style = {
 export default class GoogleMapMarkers extends Component {
   /* eslint-disable react/forbid-prop-types */
   static propTypes = {
+    useTouchEvents: PropTypes.bool,
     geoService: PropTypes.any,
     style: PropTypes.any,
     distanceToMouse: PropTypes.func,
@@ -117,24 +118,41 @@ export default class GoogleMapMarkers extends Component {
     );
   };
 
-  _onChildClick = () => {
+  _onChildClick = (event) => {
     if (this.props.onChildClick) {
       if (this.hoverChildProps_) {
         const hoverKey = this.hoverKey_;
         const childProps = this.hoverChildProps_;
         // click works only on hovered item
         this.props.onChildClick(hoverKey, childProps);
+
+        // clear touch state as there is no mouse over on touch events
+        if(this.props.useTouchEvents){
+          this._onChildMouseLeave();
+        }
       }
     }
   };
 
-  _onChildMouseDown = () => {
+  _onChildMouseDown = (event) => {
     if (this.props.onChildMouseDown) {
-      if (this.hoverChildProps_) {
+      var canPerformEvent = (this.hoverChildProps_ ? true : false)
+      if (!canPerformEvent && this.props.useTouchEvents){
+        const eventPosition = {
+          x: event.touches[0].pageX,
+          y: event.touches[0].pageY
+        }
+        const closestElement = this.getClosestElementOnRangeOf(eventPosition)
+        if (closestElement) {
+          canPerformEvent = true;
+          this._onChildMouseEnter(closestElement.key, closestElement.props);
+        }
+      }
+      if (canPerformEvent) {
         const hoverKey = this.hoverKey_;
         const childProps = this.hoverChildProps_;
         // works only on hovered item
-        this.props.onChildMouseDown(hoverKey, childProps);
+        this.props.onChildMouseDown(event, hoverKey, childProps);
       }
     }
   };
@@ -180,7 +198,7 @@ export default class GoogleMapMarkers extends Component {
     this.allowMouse_ = value;
   };
 
-  _onMouseChangeHandler = () => {
+  _onMouseChangeHandler = (event) => {
     if (this.allowMouse_) {
       this._onMouseChangeHandlerRaf();
     }
@@ -194,47 +212,11 @@ export default class GoogleMapMarkers extends Component {
     const mp = this.props.dispatcher.getMousePosition();
 
     if (mp) {
-      const distances = [];
-      const hoverDistance = this.props.getHoverDistance();
-
-      React.Children.forEach(this.state.children, (child, childIndex) => {
-        if (!child) return;
-        // layers
-        if (
-          child.props.latLng === undefined &&
-          child.props.lat === undefined &&
-          child.props.lng === undefined
-        ) {
-          return;
-        }
-
-        const childKey =
-          child.key !== undefined && child.key !== null
-            ? child.key
-            : childIndex;
-        const dist = this.props.distanceToMouse(
-          this.dimensionsCache_[childKey],
-          mp,
-          child.props
-        );
-        if (dist < hoverDistance) {
-          distances.push({
-            key: childKey,
-            dist,
-            props: child.props,
-          });
-        }
-      });
-
-      if (distances.length) {
-        distances.sort((a, b) => a.dist - b.dist);
-        const hoverKey = distances[0].key;
-        const childProps = distances[0].props;
-
-        if (this.hoverKey_ !== hoverKey) {
+      const closestElement = this.getClosestElementOnRangeOf(mp)
+      if (closestElement) {
+        if (this.hoverKey_ !== closestElement.key) {
           this._onChildMouseLeave();
-
-          this._onChildMouseEnter(hoverKey, childProps);
+          this._onChildMouseEnter(closestElement.key, closestElement.props);
         }
       } else {
         this._onChildMouseLeave();
@@ -243,6 +225,48 @@ export default class GoogleMapMarkers extends Component {
       this._onChildMouseLeave();
     }
   };
+
+  getClosestElementOnRangeOf = (mp) => {
+    const hoverDistance = this.props.getHoverDistance();
+    const elementsOnRange = [];
+    React.Children.forEach(this.state.children, (child, childIndex) => {
+      if (!child) return;
+      // layers
+      if (
+        child.props.latLng === undefined &&
+        child.props.lat === undefined &&
+        child.props.lng === undefined
+      ) {
+        return;
+      }
+
+      const childKey =
+        child.key !== undefined && child.key !== null
+          ? child.key
+          : childIndex;
+
+      const dist = this.props.distanceToMouse(
+          this.dimensionsCache_[childKey],
+          mp,
+          child.props
+        );
+
+      if (dist < hoverDistance) {
+        elementsOnRange.push({
+          key: childKey,
+          dist,
+          props: child.props,
+        });
+      }
+    });
+
+    if (elementsOnRange.length) {
+      elementsOnRange.sort((a, b) => a.dist - b.dist);
+      return elementsOnRange[0];
+    }
+
+    return null
+  }
 
   _getDimensions = (key) => {
     const childKey = key;

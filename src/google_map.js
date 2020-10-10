@@ -97,6 +97,7 @@ const isFullScreen = () =>
 
 class GoogleMap extends Component {
   static propTypes = {
+    useTouchEvents: PropTypes.bool,
     apiKey: PropTypes.string,
     bootstrapURLKeys: PropTypes.any,
 
@@ -280,6 +281,17 @@ class GoogleMap extends Component {
       ...this.props.bootstrapURLKeys,
     };
 
+    // Bind touch events
+    if(this.props.useTouchEvents){
+      addPassiveEventListener(
+        mapDom,
+        'touchstart',
+        this._onMapMouseDownNative,
+        true
+      );
+      addPassiveEventListener(window, 'touchend', this._onChildMouseUp, false);
+    }
+
     this.props.googleMapLoader(bootstrapURLKeys, this.props.heatmapLibrary); // we can start load immediatly
 
     setTimeout(
@@ -441,6 +453,15 @@ class GoogleMap extends Component {
     window.removeEventListener('resize', this._onWindowResize);
     window.removeEventListener('keydown', this._onKeyDownCapture);
     window.removeEventListener('mouseup', this._onChildMouseUp, false);
+
+    // Remove touch events
+    if (this.props.useTouchEvents) {
+      if (mapDom) {
+        mapDom.removeEventListener('touchstart', this._onMapMouseDownNative, true);
+      }
+      mapDom.removeEventListener('touchend', this._onChildMouseUp, true);
+    }
+
     if (this.props.resetBoundsOnResize) {
       removeResizeListener(mapDom, this._mapDomResizeCallback);
     }
@@ -514,6 +535,7 @@ class GoogleMap extends Component {
 
   _renderPortal = () => (
     <GoogleMapMarkers
+      useTouchEvents={this.props.useTouchEvents}
       experimental={this.props.experimental}
       onChildClick={this._onChildClick}
       onChildMouseDown={this._onChildMouseDown}
@@ -885,9 +907,10 @@ class GoogleMap extends Component {
     return undefined;
   };
 
-  _onChildMouseDown = (hoverKey, childProps) => {
+  _onChildMouseDown = (event, hoverKey, childProps) => {
     this.childMouseDownArgs_ = [hoverKey, childProps];
     if (this.props.onChildMouseDown) {
+      this.populateMouseParamWithEvent(event)
       this.props.onChildMouseDown(hoverKey, childProps, { ...this.mouse_ });
     }
   };
@@ -945,40 +968,51 @@ class GoogleMap extends Component {
     this.resetSizeOnIdle_ = true;
   };
 
-  _onMapMouseMove = (e) => {
-    if (!this.mouseInMap_) return;
+  _onMapMouseMove = (event) => {
+    if (!this.mouseInMap_ && !this.props.useTouchEvents) return;
 
     const currTime = new Date().getTime();
     const K_RECALC_CLIENT_RECT_MS = 50;
 
     if (currTime - this.mouseMoveTime_ > K_RECALC_CLIENT_RECT_MS) {
-      this.boundingRect_ = e.currentTarget.getBoundingClientRect();
+      this.boundingRect_ = event.currentTarget.getBoundingClientRect();
     }
     this.mouseMoveTime_ = currTime;
-
-    const mousePosX = e.clientX - this.boundingRect_.left;
-    const mousePosY = e.clientY - this.boundingRect_.top;
-
-    if (!this.mouse_) {
-      this.mouse_ = { x: 0, y: 0, lat: 0, lng: 0 };
-    }
-
-    this.mouse_.x = mousePosX;
-    this.mouse_.y = mousePosY;
-
-    const latLng = this.geoService_.fromContainerPixelToLatLng(this.mouse_);
-    this.mouse_.lat = latLng.lat;
-    this.mouse_.lng = latLng.lng;
-
+    this.populateMouseParamWithEvent(event)
     this._onChildMouseMove();
 
     if (currTime - this.dragTime_ < K_IDLE_TIMEOUT) {
       this.fireMouseEventOnIdle_ = true;
     } else {
-      this.markersDispatcher_.emit('kON_MOUSE_POSITION_CHANGE');
-      this.fireMouseEventOnIdle_ = false;
+
+      // if will prevent mouse and touch double call
+      if (!this.props.useTouchEvents || event.type === 'touchmove'){
+        this.markersDispatcher_.emit('kON_MOUSE_POSITION_CHANGE');
+        this.fireMouseEventOnIdle_ = false;
+      }
     }
   };
+
+  populateMouseParamWithEvent = (event) => {
+    if (!this.mouse_) {
+      this.mouse_ = { x: 0, y: 0, lat: 0, lng: 0 };
+    }
+
+    const bundingClientReact = event.currentTarget.getBoundingClientRect()
+    if (this.props.useTouchEvents) {
+      if (event.touches) {
+        this.mouse_.x = event.touches[0].clientX - bundingClientReact.left;
+        this.mouse_.y = event.touches[0].clientY - bundingClientReact.top;
+      }
+    } else{
+      this.mouse_.x = event.clientX - bundingClientReact.left;
+      this.mouse_.y = event.clientY - bundingClientReact.top;
+    }
+
+    const latLng = this.geoService_.fromContainerPixelToLatLng(this.mouse_);
+    this.mouse_.lat = latLng.lat;
+    this.mouse_.lng = latLng.lng;
+  }
 
   // K_IDLE_CLICK_TIMEOUT - looks like 300 is enough
   _onClick = (...args) =>
@@ -989,9 +1023,12 @@ class GoogleMap extends Component {
     this.props.onClick(...args);
 
   _onMapClick = (event) => {
+    // avoid double call from mouse and touch at same time
+    if (this.props.useTouchEvents && event.type !== 'touchend'){
+      return;
+    }
+
     if (this.markersDispatcher_) {
-      // support touch events and recalculate mouse position on click
-      this._onMapMouseMove(event);
       const currTime = new Date().getTime();
       if (currTime - this.dragTime_ > K_IDLE_TIMEOUT) {
         if (this.mouse_) {
@@ -1009,8 +1046,7 @@ class GoogleMap extends Component {
   // gmap can't prevent map drag if mousedown event already occured
   // the only workaround I find is prevent mousedown native browser event
   _onMapMouseDownNative = (event) => {
-    if (!this.mouseInMap_) return;
-
+    if (!this.mouseInMap_ || (this.props.useTouchEvents && event.type !== 'touchstart')) return;
     this._onMapMouseDown(event);
   };
 
@@ -1018,9 +1054,6 @@ class GoogleMap extends Component {
     if (this.markersDispatcher_) {
       const currTime = new Date().getTime();
       if (currTime - this.dragTime_ > K_IDLE_TIMEOUT) {
-        // Hovered marker detected at mouse move could be deleted at mouse down time
-        // so it will be good to force hovered marker recalculation
-        this._onMapMouseMove(event);
         this.markersDispatcher_.emit('kON_MDOWN', event);
       }
     }
@@ -1139,6 +1172,7 @@ class GoogleMap extends Component {
     const overlay = this.state.overlay;
     const mapMarkerPrerender = !overlay ? (
       <GoogleMapMarkersPrerender
+        useTouchEvents={this.props.useTouchEvents}
         experimental={this.props.experimental}
         onChildClick={this._onChildClick}
         onChildMouseDown={this._onChildMouseDown}
@@ -1158,6 +1192,8 @@ class GoogleMap extends Component {
         onMouseMove={this._onMapMouseMove}
         onMouseDownCapture={this._onMapMouseDownCapture}
         onClick={this._onMapClick}
+        onTouchMove={this._onMapMouseMove}
+        onTouchEnd={this._onMapClick}
       >
         <GoogleMapMap registerChild={this._registerChild} />
         {IS_REACT_16 && overlay && createPortal(this._renderPortal(), overlay)}
