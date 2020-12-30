@@ -290,6 +290,14 @@ class GoogleMap extends Component {
         true
       );
       addPassiveEventListener(window, 'touchend', this._onChildMouseUp, false);
+
+      // Adding this event this way (instead of onTouchmove=...) allows us to call the preventdefault method,
+      // what is not possible the other way, in react.
+      const self = this
+      this.refs.refHolder.addEventListener('touchmove', function(event){
+        event.preventDefault()
+        self._onMapMouseMove(event)
+      }, { passive: false })
     }
 
     this.props.googleMapLoader(bootstrapURLKeys, this.props.heatmapLibrary); // we can start load immediatly
@@ -1192,8 +1200,8 @@ class GoogleMap extends Component {
         onMouseMove={this._onMapMouseMove}
         onMouseDownCapture={this._onMapMouseDownCapture}
         onClick={this._onMapClick}
-        onTouchMove={this._onMapMouseMove}
         onTouchEnd={this._onMapClick}
+        ref="refHolder"
       >
         <GoogleMapMap registerChild={this._registerChild} />
         {IS_REACT_16 && overlay && createPortal(this._renderPortal(), overlay)}
